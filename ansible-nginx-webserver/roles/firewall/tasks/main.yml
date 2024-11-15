@@ -1,0 +1,40 @@
+---
+# Backup existing pf.conf file
+- name: Backup pf.conf
+  command: cp /etc/pf.conf /etc/pf.conf.bak
+  become: yes
+  args:
+    creates: /etc/pf.conf.bak
+
+# Configure pf.conf to allow HTTP and HTTPS 
+- name: Configure pf.conf
+  copy:
+    dest: /etc/pf.conf
+    content: |
+      # macros
+      ext_if = "en0"
+
+      # options
+      set skip on lo0
+
+      # default rules
+      block in all
+      pass out all keep state
+
+      # allows HTTP and HTTPS traffic
+      pass in on $ext_if proto tcp from any to any port 80
+      pass in on $ext_if proto tcp from any to any port 443
+  become: yes
+  notify:
+    - Reload pf
+
+# Reload pf to apply changes
+- name: Reload pf
+  command: pfctl -f /etc/pf.conf
+  become: yes
+
+# Enable pf, if not already enabled
+- name: Enable pf
+  command: pfctl -e
+  become: yes
+  ignore_errors: yes

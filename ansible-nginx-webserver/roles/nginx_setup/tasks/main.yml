@@ -1,0 +1,149 @@
+---
+# Gets Hombrew prefix for mac environment
+- name: Get Homebrew prefix
+  command: brew --prefix
+  register: brew_prefix_cmd
+  changed_when: false
+
+- set_fact:
+    brew_prefix: "{{ brew_prefix_cmd.stdout }}"
+
+# Install Nginx via Homebrew 
+- name: Install Nginx using Homebrew
+  homebrew:
+    name: nginx
+    state: present
+  become: no 
+
+# Ensure homebrew is updated 
+- name: Update Homebrew on macOS
+  command: brew update
+  become: no
+
+# Ensure Nginx is stopped before making changes (in case nginx installed/running)
+- name: Ensure Nginx service stopped
+  shell: brew services stop nginx
+  become: no 
+  ignore_errors: yes
+
+# Create custom webpage
+- name: Create a directory for the website
+  file:
+    path: /usr/local/var/www/test_site
+    state: directory
+    mode: '0755'
+
+- name: Serve a custom webpage
+  copy:
+    dest: /usr/local/var/www/test_site/index.html
+    content: |
+      <html>
+      <head><title>Hello World</title></head>
+      <body><h1>Hello World!</h1></body>
+      </html>
+  become: yes
+
+# Configure Nginx to serve this page
+- name: Configure Nginx to serve the custom web page
+  copy:
+    dest: /opt/homebrew/etc/nginx/nginx.conf
+    content: |
+      worker_processes  1;
+
+      events {
+          worker_connections  1024;
+      }
+
+      http {
+          server {
+              listen       8080;
+              server_name  localhost;
+
+              location / {
+                  root   /usr/local/var/www/test_site;
+                  index  index.html;
+              }
+          }
+      }
+  become: no
+
+# Remove existing SSL certificate and key if they exist
+- name: Remove existing SSL certificate and key
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - /opt/homebrew/etc/nginx/ssl/selfsigned.crt
+    - /opt/homebrew/etc/nginx/ssl/selfsigned.key
+  become: no
+
+# Create directory for SSL certificates
+- name: Create directory for SSL certificates
+  file:
+    path: /opt/homebrew/etc/nginx/ssl
+    state: directory
+    mode: '0755'
+  become: no
+
+# Generate private key
+- name: Generate private key
+  command: openssl genrsa -out /opt/homebrew/etc/nginx/ssl/selfsigned.key 2048
+  args:
+    creates: /opt/homebrew/etc/nginx/ssl/selfsigned.key
+  become: no
+
+# Generate self-signed certificate
+- name: Generate self-signed certificate
+  command: >
+    openssl req -new -x509 -key /opt/homebrew/etc/nginx/ssl/selfsigned.key -out /opt/homebrew/etc/nginx/ssl/selfsigned.crt
+    -days 365
+    -subj "/C=US/ST=State/L=City/O=Organization/OU=Org Unit/CN=localhost"
+  args:
+    creates: /opt/homebrew/etc/nginx/ssl/selfsigned.crt
+  become: no
+
+# Configure Nginx to use SSL and redirect HTTP to HTTPS
+- name: Configure Nginx for SSL and redirect HTTP to HTTPS
+  copy:
+    dest: /opt/homebrew/etc/nginx/nginx.conf
+    content: |
+      worker_processes  1;
+
+      events {
+          worker_connections  1024;
+      }
+
+      http {
+          # Redirect HTTP to HTTPS
+          server {
+              listen       80;
+              server_name  localhost;
+
+              return 301 https://$host$request_uri;
+          }
+
+          # HTTPS server
+          server {
+              listen       443 ssl;
+              server_name  localhost;
+
+              ssl_certificate     /opt/homebrew/etc/nginx/ssl/selfsigned.crt;
+              ssl_certificate_key /opt/homebrew/etc/nginx/ssl/selfsigned.key;
+
+              ssl_protocols       TLSv1.2 TLSv1.3;
+              ssl_ciphers         HIGH:!aNULL:!MD5;
+
+              location / {
+                  root   /usr/local/var/www/test_site;
+                  index  index.html;
+              }
+          }
+      }
+  become: no
+  vars:
+    nginx_conf_path: /opt/homebrew/etc/nginx/nginx.conf
+
+# Ensure Nginx is started and running
+- name: Start Nginx
+  shell: brew services restart nginx
+  become: no # must run nginx with elevated privileges 
